@@ -1,11 +1,11 @@
 package:
   name: vpf
-  version: 1.1
+  version: 1.1.1
 
 source:
   # TODO: change to official repo once merged
-  git_rev: f2cb3ecfef0e2024f07f68a03f15587071f9bfd2
-  git_url: https://github.com/deepsworld/VideoProcessingFramework.git
+  git_rev: b048cacaab867577afda3a2cf1353b43cd29e523
+  git_url: https://github.com/Techainer/VideoProcessingFramework
 
 build:
   number: 0
@@ -22,16 +22,16 @@ requirements:
     - conda-forge::cudatoolkit-dev=11.3
     - conda-forge::ffmpeg>=4.4.1
     - numpy
-    - pip 
-    - python=3.9
-    - pytorch::pytorch=1.10
+    - pip
+    - python=3.8
+    - pytorch::pytorch=1.10.2
     - setuptools
   run:
     - conda-forge::ffmpeg>=4.4.1
     - numpy
-    - python=3.9
-    - pytorch::pytorch=1.10
-    - pytorch::torchvision=0.11.1
+    - python=3.8
+    - pytorch::pytorch=1.10.2
+    - pytorch::torchvision=0.11.3
 test:
   imports:
     - PyNvCodec
