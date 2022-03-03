@@ -1,8 +1,8 @@
-ARG OS_VERSION=18.04
+ARG OS_VERSION=20.04
 FROM ubuntu:${OS_VERSION}
 
 # Install min essentials
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         wget \
         libxml2 \ 
         build-essential \
@@ -23,8 +23,8 @@ RUN wget -O Miniconda3-latest-Linux-x86_64.sh https://repo.anaconda.com/minicond
 	&& sh Miniconda3-latest-Linux-x86_64.sh -b -p miniconda3 \
 	&& rm -fr Miniconda3-latest-Linux-x86_64.sh 
 
-ARG CONDA_ENV=build39
-ARG PYTHON_VER=3.9
+ARG CONDA_ENV=build38
+ARG PYTHON_VER=3.8
 
 # Create environment from .yml 
 RUN conda install mamba -y -n base -c conda-forge \
