@@ -1,0 +1,1 @@
+docker-compose -f docker/docker-compose.yml build --build-arg GEN_PYTORCH_EXT=1 vpf

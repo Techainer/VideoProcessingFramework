@@ -1,5 +1,6 @@
 #
 # Copyright 2019 NVIDIA Corporation
+# Copyright 2021 Kognia Sports Intelligence
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,12 +33,14 @@ endif(WIN32)
 
 if(UNIX)
 	set (CMAKE_CXX_STANDARD 11)
-	include_directories(/usr/local/cuda/include)
-	link_directories(/usr/local/cuda/lib64)
+	# NOTE: should not hard code cuda paths as could differ in different env
+	include_directories(${CUDA_INCLUDE_DIR})
+	link_directories(${CUDA_LIB_DIR})
 endif(UNIX)
 
 add_subdirectory(PyNvCodec)
 add_subdirectory(PytorchNvCodec)
+add_subdirectory(Tests)
 
 include_directories(${TC_CORE_INC_PATH})
 include_directories(${TC_INC_PATH})
@@ -54,15 +57,31 @@ if(GENERATE_PYTHON_BINDINGS)
 	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SampleDecodeSw.py				DESTINATION bin)
 	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SampleDecodeMultiThread.py	DESTINATION bin)
 	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SampleEncodeMultiThread.py	DESTINATION bin)
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SampleDemuxDecode.py			DESTINATION bin)
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SamplePyTorch.py				DESTINATION bin)
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SampleTensorRTResnet.py		DESTINATION bin)
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SampleTorchResnet.py			DESTINATION bin)
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/SampleDecodeRTSP.py			DESTINATION bin)
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/Tests.py						DESTINATION bin)
 endif(GENERATE_PYTHON_BINDINGS)
 
 if(GENERATE_PYTORCH_EXTENSION)
 	#Extension will be built using torch.utils.cpp_extension;
 	#So we just launch python script;
 	add_custom_command(	OUTPUT Pytorch_Nv_Codec
-						COMMAND cd ${PYTORCH_EXTENSION_SOURCES_DIR} && python setup.py build --build-lib="${CMAKE_INSTALL_PREFIX}/bin")
+						COMMAND cd ${PYTORCH_EXTENSION_SOURCES_DIR} && python setup.py build --build-lib="${CMAKE_INSTALL_PREFIX}")
 
 	add_custom_target(	PytorchNvCodec
 						DEPENDS Pytorch_Nv_Codec)
 	add_dependencies(PyNvCodec PytorchNvCodec)
 endif(GENERATE_PYTORCH_EXTENSION)
+
+if(ENABLE_TESTS)
+	foreach(TEST_SUITE ${TEST_SUITES})
+		install(FILES ${TEST_SUITE} DESTINATION bin)
+	endforeach()
+
+	foreach(TEST_ASSET ${TEST_ASSETS})
+		install(FILES ${TEST_ASSET} DESTINATION bin)
+	endforeach()
+endif(ENABLE_TESTS)

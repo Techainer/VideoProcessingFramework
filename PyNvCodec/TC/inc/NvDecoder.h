@@ -22,8 +22,44 @@
 #include "nvcuvid.h"
 #include <stdint.h>
 
+struct DecodedFrameContext
+{
+  CUdeviceptr mem;
+  uint64_t pts;
+  uint64_t bsl;
+  PacketData out_pdata;
+
+  // Set up this flag to feed decoder with empty input without setting up EOS flag;
+  bool no_eos;
+
+  DecodedFrameContext(CUdeviceptr new_ptr, uint64_t new_pts, uint64_t new_poc)
+      : mem(new_ptr), pts(new_pts), no_eos(false) {}
+
+  DecodedFrameContext(CUdeviceptr new_ptr, uint64_t new_pts, uint64_t new_poc,
+                      bool new_no_eos)
+      : mem(new_ptr), pts(new_pts), no_eos(new_no_eos) {}
+
+  DecodedFrameContext() : mem(0U), pts(0U), no_eos(false) {}
+};
+
 unsigned long GetNumDecodeSurfaces(cudaVideoCodec eCodec, unsigned int nWidth,
                                    unsigned int nHeight);
+
+class decoder_error : public std::runtime_error
+{
+public:
+  decoder_error(const char *str) : std::runtime_error(str) {}
+};
+
+class cuvid_parser_error : public std::runtime_error
+{
+public:
+  cuvid_parser_error(const char *str) : std::runtime_error(str) {}
+};
+
+namespace VPF {
+class Buffer;
+};
 
 class DllExport NvDecoder {
 public:
@@ -40,17 +76,21 @@ public:
 
   int GetHeight();
 
+  int GetChromaHeight();
+
   int GetFrameSize();
 
   int GetDeviceFramePitch();
 
   int GetBitDepth();
 
-  bool DecodeLockSurface(const uint8_t *pData, size_t nSize,
-                         CUdeviceptr &decSurface, bool &isFrameReturned,
-                         uint32_t flags = 0U);
+  bool DecodeLockSurface(VPF::Buffer const* encFrame,
+                         struct PacketData const& pdata,
+                         DecodedFrameContext& decCtx);
 
   void UnlockSurface(CUdeviceptr &lockedSurface);
+
+  void Init(CUVIDEOFORMAT* format) { HandleVideoSequence(format); }
 
   cudaVideoCodec GetCodec() const;
 

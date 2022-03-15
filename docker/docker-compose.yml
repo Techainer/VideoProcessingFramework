@@ -1,0 +1,26 @@
+version: "3.3"
+
+services:
+
+  vpf:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.gpu
+      args:
+        GEN_PYTORCH_EXT: 0
+    ipc: host
+    runtime: nvidia
+    image: nvidia/videoprocessingframework:vpf
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
+    network_mode: host
+
+  vpf-tensorrt:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile-tensorrt.gpu
+    ipc: host
+    runtime: nvidia
+    image: nvidia/videoprocessingframework:vpf-tensorrt
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility

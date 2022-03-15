@@ -1,5 +1,7 @@
 /*
  * Copyright 2019 NVIDIA Corporation
+ * Copyright 2021 Videonetics Technology Private Limited
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -28,6 +30,34 @@ enum Pixel_Format {
   NV12 = 3,
   YUV420 = 4,
   RGB_PLANAR = 5,
+  BGR = 6,
+  YCBCR = 7,
+  YUV444 = 8,
+  RGB_32F = 9,
+  RGB_32F_PLANAR = 10,
+  YUV422 = 11,
+};
+
+enum ColorSpace {
+  BT_601 = 0,
+  BT_709 = 1,
+  UNSPEC = 2,
+};
+
+enum ColorRange {
+  MPEG = 0, /* Narrow range.*/
+  JPEG = 1, /* Full range. */
+  UDEF = 2,
+};
+
+struct ColorspaceConversionContext {
+  ColorSpace color_space;
+  ColorRange color_range;
+
+  ColorspaceConversionContext() : color_space(UNSPEC), color_range(UDEF) {}
+
+  ColorspaceConversionContext(ColorSpace cspace, ColorRange crange)
+      : color_space(cspace), color_range(crange) {}
 };
 
 /* Represents CPU-side memory.
@@ -41,25 +71,67 @@ public:
 
   ~Buffer() final;
   void *GetRawMemPtr();
-  size_t GetRawMemSize();
+  const void *GetRawMemPtr() const;
+  size_t GetRawMemSize() const;
   void Update(size_t newSize, void *newPtr = nullptr);
+  bool CopyFrom(size_t size, void const *ptr);
   template <typename T> T *GetDataAs() { return (T *)GetRawMemPtr(); }
+  template <typename T> T const *GetDataAs() const {
+    return (T const *)GetRawMemPtr();
+  }
 
   static Buffer *Make(size_t bufferSize);
   static Buffer *Make(size_t bufferSize, void *pCopyFrom);
-  static Buffer *MakeOwnMem(size_t bufferSize);
+
+  static Buffer *MakeOwnMem(size_t bufferSize, CUcontext ctx = nullptr);
+  static Buffer *MakeOwnMem(size_t bufferSize, const void *pCopyFrom,
+                            CUcontext ctx = nullptr);
 
 private:
-  explicit Buffer(size_t bufferSize, bool ownMemory = true);
-  Buffer(size_t bufferSize, void *pCopyFrom, bool ownMemory = true);
+  explicit Buffer(size_t bufferSize, bool ownMemory = true,
+                  CUcontext ctx = nullptr);
+  Buffer(size_t bufferSize, void *pCopyFrom, bool ownMemory,
+         CUcontext ctx = nullptr);
+  Buffer(size_t bufferSize, const void *pCopyFrom, CUcontext ctx = nullptr);
   bool Allocate();
   void Deallocate();
 
   bool own_memory = true;
   size_t mem_size = 0UL;
   void *pRawData = nullptr;
+  CUcontext context = nullptr;
 #ifdef TRACK_TOKEN_ALLOCATIONS
   uint32_t id;
+#endif
+};
+
+class DllExport CudaBuffer final : public Token {
+public:
+  CudaBuffer() = delete;
+  CudaBuffer(const CudaBuffer &other) = delete;
+  CudaBuffer &operator=(CudaBuffer &other) = delete;
+
+  static CudaBuffer *Make(size_t elemSize, size_t numElems, CUcontext context);
+  CudaBuffer *Clone();
+
+  size_t GetRawMemSize() const { return elem_size * num_elems; }
+  size_t GetNumElems() const { return num_elems; }
+  size_t GetElemSize() const { return elem_size; }
+  CUdeviceptr GpuMem() { return gpuMem; }
+  ~CudaBuffer();
+
+private:
+  CudaBuffer(size_t elemSize, size_t numElems, CUcontext context);
+  bool Allocate();
+  void Deallocate();
+
+  CUdeviceptr gpuMem = 0UL;
+  CUcontext ctx = nullptr;
+  size_t elem_size = 0U;
+  size_t num_elems = 0U;
+
+#ifdef TRACK_TOKEN_ALLOCATIONS
+  uint64_t id = 0U;
 #endif
 };
 
@@ -69,6 +141,15 @@ class DllExport CudaCtxPush final {
 public:
   explicit CudaCtxPush(CUcontext ctx) { cuCtxPushCurrent(ctx); }
   ~CudaCtxPush() { cuCtxPopCurrent(nullptr); }
+};
+
+/* RAII-style CUDA Context sync;
+ */
+class DllExport CudaStrSync final {
+  CUstream str;
+public:
+  explicit CudaStrSync(CUstream stream) {str = stream;}
+  ~CudaStrSync() { cuStreamSynchronize(str); }
 };
 
 /* Surface plane class;
@@ -110,6 +191,11 @@ struct DllExport SurfacePlane {
   SurfacePlane(uint32_t newWidth, uint32_t newHeight, uint32_t newElemSize,
                CUcontext context);
 
+  /* Construct & own memory. Copy from given pointer.
+   */
+  SurfacePlane(uint32_t newWidth, uint32_t newHeight, uint32_t newElemSize,
+               uint32_t srcPitch, CUdeviceptr src, CUcontext context, CUstream str);
+
   /* Destruct, free memory if we own it;
    */
   ~SurfacePlane();
@@ -121,6 +207,24 @@ struct DllExport SurfacePlane {
   /* Deallocate memory if we own it;
    */
   void Deallocate();
+
+  /* Copy from SurfacePlane memory to given pointer.
+   * User must check that memory allocation referenced by ptr is enough.
+   */
+  void Export(CUdeviceptr dst, uint32_t dst_pitch, CUcontext ctx, CUstream str);
+
+  /* Copy to SurfacePlane memory from given pointer.
+   * User must check that memory allocation referenced by ptr is enough.
+   */
+  void Import(CUdeviceptr src, uint32_t src_pitch, CUcontext ctx, CUstream str);
+
+  /* Copy from SurfacePlane;
+   */
+  void Export(SurfacePlane &dst, CUcontext ctx, CUstream str);
+
+  /* Copy to SurfacePlane;
+   */
+  void Import(SurfacePlane &src, CUcontext ctx, CUstream str);
 
   /* Returns true if class owns the memory, false otherwise;
    */
@@ -199,6 +303,10 @@ public:
 
   virtual SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) = 0;
 
+  /* Update from set of image planes, don't own the memory;
+   */
+  virtual bool Update(SurfacePlane *pPlanes, size_t planesNum) = 0;
+
   /* Virtual copy constructor;
    */
   virtual Surface *Clone() = 0;
@@ -247,6 +355,7 @@ public:
   bool Empty() const override { return 0UL == plane.GpuMem(); }
 
   void Update(const SurfacePlane &newPlane);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
   SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
 
 private:
@@ -280,6 +389,8 @@ public:
   bool Empty() const override { return 0UL == plane.GpuMem(); }
 
   void Update(const SurfacePlane &newPlane);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
+
   SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
 
 private:
@@ -288,7 +399,7 @@ private:
 
 /* 8-bit YUV420P image;
  */
-class DllExport SurfaceYUV420 final : public Surface {
+class DllExport SurfaceYUV420 : public Surface {
 public:
   ~SurfaceYUV420();
 
@@ -297,8 +408,8 @@ public:
   SurfaceYUV420(uint32_t width, uint32_t height, CUcontext context);
   SurfaceYUV420 &operator=(const SurfaceYUV420 &other);
 
-  Surface *Clone() override;
-  Surface *Create() override;
+  virtual Surface *Clone() override;
+  virtual Surface *Create() override;
 
   uint32_t Width(uint32_t planeNumber = 0U) const override;
   uint32_t WidthInBytes(uint32_t planeNumber = 0U) const override;
@@ -307,7 +418,7 @@ public:
   uint32_t HostMemSize() const override;
 
   CUdeviceptr PlanePtr(uint32_t planeNumber = 0U) override;
-  Pixel_Format PixelFormat() const override { return YUV420; }
+  virtual Pixel_Format PixelFormat() const override { return YUV420; }
   uint32_t NumPlanes() const override { return 3; }
   uint32_t ElemSize() const override { return sizeof(uint8_t); }
   bool Empty() const override {
@@ -317,12 +428,63 @@ public:
 
   void Update(const SurfacePlane &newPlaneY, const SurfacePlane &newPlaneU,
               const SurfacePlane &newPlaneV);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
   SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
 
 private:
   SurfacePlane planeY;
   SurfacePlane planeU;
   SurfacePlane planeV;
+};
+
+class DllExport SurfaceYUV422 : public Surface {
+public:
+  ~SurfaceYUV422();
+
+  SurfaceYUV422();
+  SurfaceYUV422(const SurfaceYUV422 &other);
+  SurfaceYUV422(uint32_t width, uint32_t height, CUcontext context);
+  SurfaceYUV422 &operator=(const SurfaceYUV422 &other);
+
+  virtual Surface *Clone() override;
+  virtual Surface *Create() override;
+
+  uint32_t Width(uint32_t planeNumber = 0U) const override;
+  uint32_t WidthInBytes(uint32_t planeNumber = 0U) const override;
+  uint32_t Height(uint32_t planeNumber = 0U) const override;
+  uint32_t Pitch(uint32_t planeNumber = 0U) const override;
+  uint32_t HostMemSize() const override;
+
+  CUdeviceptr PlanePtr(uint32_t planeNumber = 0U) override;
+  virtual Pixel_Format PixelFormat() const override { return YUV422; }
+  uint32_t NumPlanes() const override { return 3; }
+  uint32_t ElemSize() const override { return sizeof(uint8_t); }
+  bool Empty() const override {
+    return 0UL == planeY.GpuMem() && 0UL == planeU.GpuMem() &&
+           0UL == planeV.GpuMem();
+  }
+
+  void Update(const SurfacePlane &newPlaneY, const SurfacePlane &newPlaneU,
+              const SurfacePlane &newPlaneV);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
+  SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
+
+private:
+  SurfacePlane planeY;
+  SurfacePlane planeU;
+  SurfacePlane planeV;
+};
+
+class DllExport SurfaceYCbCr final : public SurfaceYUV420 {
+public:
+  Pixel_Format PixelFormat() const override { return YCBCR; }
+
+  SurfaceYCbCr();
+  SurfaceYCbCr(const SurfaceYCbCr &other);
+  SurfaceYCbCr(uint32_t width, uint32_t height, CUcontext context);
+
+  Surface *Clone() override;
+  Surface *Create() override;
 };
 
 /* 8-bit RGB image;
@@ -352,6 +514,40 @@ public:
   bool Empty() const override { return 0UL == plane.GpuMem(); }
 
   void Update(const SurfacePlane &newPlane);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
+  SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
+
+protected:
+  SurfacePlane plane;
+};
+
+/* 8-bit BGR image;
+ */
+class DllExport SurfaceBGR : public SurfaceRGB {
+public:
+  ~SurfaceBGR();
+
+  SurfaceBGR();
+  SurfaceBGR(const SurfaceBGR &other);
+  SurfaceBGR(uint32_t width, uint32_t height, CUcontext context);
+  SurfaceBGR &operator=(const SurfaceBGR &other);
+
+  Surface *Clone() override;
+  Surface *Create() override;
+
+  uint32_t Width(uint32_t planeNumber = 0U) const override;
+  uint32_t WidthInBytes(uint32_t planeNumber = 0U) const override;
+  uint32_t Height(uint32_t planeNumber = 0U) const override;
+  uint32_t Pitch(uint32_t planeNumber = 0U) const override;
+  uint32_t HostMemSize() const override;
+
+  CUdeviceptr PlanePtr(uint32_t planeNumber = 0U) override;
+  Pixel_Format PixelFormat() const override { return BGR; }
+  uint32_t NumPlanes() const override { return 1; }
+  virtual uint32_t ElemSize() const override { return sizeof(uint8_t); }
+  bool Empty() const override { return 0UL == plane.GpuMem(); }
+
+  void Update(const SurfacePlane &newPlane);
   SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
 
 protected:
@@ -369,6 +565,60 @@ public:
   SurfaceRGBPlanar(uint32_t width, uint32_t height, CUcontext context);
   SurfaceRGBPlanar &operator=(const SurfaceRGBPlanar &other);
 
+  virtual Surface *Clone() override;
+  virtual Surface *Create() override;
+
+  uint32_t Width(uint32_t planeNumber = 0U) const override;
+  uint32_t WidthInBytes(uint32_t planeNumber = 0U) const override;
+  uint32_t Height(uint32_t planeNumber = 0U) const override;
+  uint32_t Pitch(uint32_t planeNumber = 0U) const override;
+  uint32_t HostMemSize() const override;
+
+  CUdeviceptr PlanePtr(uint32_t planeNumber = 0U) override;
+  Pixel_Format PixelFormat() const override { return RGB_PLANAR; }
+  uint32_t NumPlanes() const override { return 3; }
+  virtual uint32_t ElemSize() const override { return sizeof(uint8_t); }
+  bool Empty() const override { return 0UL == plane.GpuMem(); }
+
+  void Update(const SurfacePlane &newPlane);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
+  SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
+
+protected:
+  SurfacePlane plane;
+};
+
+class DllExport SurfaceYUV444 : public SurfaceRGBPlanar {
+public:
+  Pixel_Format PixelFormat() const override { return YUV444; }
+
+  SurfaceYUV444();
+  SurfaceYUV444(const SurfaceYUV444 &other);
+  SurfaceYUV444(uint32_t width, uint32_t height, CUcontext context);
+  SurfaceYUV444 &operator=(const SurfaceYUV444 &other);
+
+  Surface *Clone() override;
+  Surface *Create() override;
+};
+
+#ifdef TRACK_TOKEN_ALLOCATIONS
+/* Returns true if allocation counters are equal to zero, false otherwise;
+ * If you want to check for dangling pointers, call this function at exit;
+ */
+bool DllExport CheckAllocationCounters();
+#endif
+
+/* 32-bit float RGB image;
+ */
+class DllExport SurfaceRGB32F : public Surface {
+public:
+  ~SurfaceRGB32F();
+
+  SurfaceRGB32F();
+  SurfaceRGB32F(const SurfaceRGB32F &other);
+  SurfaceRGB32F(uint32_t width, uint32_t height, CUcontext context);
+  SurfaceRGB32F &operator=(const SurfaceRGB32F &other);
+
   Surface *Clone() override;
   Surface *Create() override;
 
@@ -379,23 +629,51 @@ public:
   uint32_t HostMemSize() const override;
 
   CUdeviceptr PlanePtr(uint32_t planeNumber = 0U) override;
-  Pixel_Format PixelFormat() const override { return RGB; }
+  Pixel_Format PixelFormat() const override { return RGB_32F; }
   uint32_t NumPlanes() const override { return 1; }
-  virtual uint32_t ElemSize() const override { return sizeof(uint8_t); }
+  virtual uint32_t ElemSize() const override { return sizeof(float); }
   bool Empty() const override { return 0UL == plane.GpuMem(); }
 
   void Update(const SurfacePlane &newPlane);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
   SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
 
 protected:
   SurfacePlane plane;
 };
 
-#ifdef TRACK_TOKEN_ALLOCATIONS
-/* Returns true if allocation counters are equal to zero, false otherwise;
- * If you want to check for dangling pointers, call this function at exit;
+/* 32-bit float planar RGB image;
  */
-bool DllExport CheckAllocationCounters();
-#endif
+class DllExport SurfaceRGB32FPlanar : public Surface {
+public:
+  ~SurfaceRGB32FPlanar();
+
+  SurfaceRGB32FPlanar();
+  SurfaceRGB32FPlanar(const SurfaceRGB32FPlanar &other);
+  SurfaceRGB32FPlanar(uint32_t width, uint32_t height, CUcontext context);
+  SurfaceRGB32FPlanar &operator=(const SurfaceRGB32FPlanar &other);
+
+  virtual Surface *Clone() override;
+  virtual Surface *Create() override;
+
+  uint32_t Width(uint32_t planeNumber = 0U) const override;
+  uint32_t WidthInBytes(uint32_t planeNumber = 0U) const override;
+  uint32_t Height(uint32_t planeNumber = 0U) const override;
+  uint32_t Pitch(uint32_t planeNumber = 0U) const override;
+  uint32_t HostMemSize() const override;
+
+  CUdeviceptr PlanePtr(uint32_t planeNumber = 0U) override;
+  Pixel_Format PixelFormat() const override { return RGB_32F_PLANAR; }
+  uint32_t NumPlanes() const override { return 3; }
+  virtual uint32_t ElemSize() const override { return sizeof(float); }
+  bool Empty() const override { return 0UL == plane.GpuMem(); }
+
+  void Update(const SurfacePlane &newPlane);
+  bool Update(SurfacePlane *pPlanes, size_t planesNum) override;
+  SurfacePlane *GetSurfacePlane(uint32_t planeNumber = 0U) override;
+
+protected:
+  SurfacePlane plane;
+};
 
 } // namespace VPF
