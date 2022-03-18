@@ -154,7 +154,7 @@ def get_ext_modules():
 # TODO: Test on windows 
 setup(
     name="VPF",
-    version="1.1.1",
+    version="1.1.2",
     license="Apache-2.0 License",
     description="Video Processing Framework",
     url="https://github.com/NVIDIA/VideoProcessingFramework",

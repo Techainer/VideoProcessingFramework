@@ -1,6 +1,6 @@
 package:
   name: vpf
-  version: 1.1.1
+  version: 1.1.2
 
 source:
   # TODO: change to official repo once merged
@@ -25,15 +25,15 @@ requirements:
     - conda-forge::numpy
     - pip
     - python=3.8
-    - pytorch::pytorch=1.10.2
+    - pytorch::pytorch=1.11.0
     - setuptools
   run:
     - conda-forge::ffmpeg>=4.3.2
     - conda-forge::av=8.1.0
     - conda-forge::numpy
     - python=3.8
-    - pytorch::pytorch=1.10.2
-    - pytorch::torchvision=0.11.3
+    - pytorch::pytorch=1.11.0
+    - pytorch::torchvision=0.12.0
 test:
   imports:
     - PyNvCodec
