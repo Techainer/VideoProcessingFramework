@@ -4,7 +4,7 @@ package:
 
 source:
   # TODO: change to official repo once merged
-  git_rev: b048cacaab867577afda3a2cf1353b43cd29e523
+  git_rev: fd9add58d1ccdff61c236a0e17374d648a37164b
   git_url: https://github.com/Techainer/VideoProcessingFramework
 
 build:
