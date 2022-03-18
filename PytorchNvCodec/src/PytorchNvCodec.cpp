@@ -65,5 +65,6 @@ torch::Tensor makefromDevicePtrUint8(CUdeviceptr ptr, uint32_t width,
 
 PYBIND11_MODULE(PytorchNvCodec, m) {
   m.def("makefromDevicePtrUint8", &makefromDevicePtrUint8,
-        py::return_value_policy::move);
+        py::return_value_policy::move,
+        py::call_guard<py::gil_scoped_release>());
 }

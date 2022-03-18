@@ -418,7 +418,8 @@ PYBIND11_MODULE(PyNvCodec, m)
             return make_shared<SurfacePlane>(*pPlane);
           },
           // Integral part of Surface, only reference it;
-          py::arg("planeNumber") = 0U, py::return_value_policy::reference)
+          py::arg("planeNumber") = 0U, py::return_value_policy::reference,
+          py::call_guard<py::gil_scoped_release>())
       .def("CopyFrom",
            [](shared_ptr<Surface> self, shared_ptr<Surface> other, int gpuID) {
              if (self->PixelFormat() != other->PixelFormat()) {
